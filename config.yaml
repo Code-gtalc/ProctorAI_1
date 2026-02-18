@@ -1,0 +1,17 @@
+config_path: ./voice-activity-detection/config.yaml
+video_path: ./realtime/anas1.mp4
+window_size: 5
+silence_delay: 0.5
+mahal_threshold: 1.5
+num_cores: 8
+only_vad: False
+live_mode: True
+camera_index: 0
+mic_device_index:
+mic_sample_rate: 16000
+mic_block_size: 1024
+mic_threshold: 0.015
+lip_motion_threshold: 6.0
+ema_alpha: 0.35
+nervous_lip_multiplier: 1.4
+mouth_hidden_texture_threshold: 10.0

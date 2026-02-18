@@ -1,0 +1,10 @@
+opencv-python>=4.11.0.86,<5
+mediapipe==0.10.32
+numpy>=2.2.0
+moviepy==1.0.3
+pandas==2.2.3
+pyyaml==6.0.2
+pyannote.audio==3.3.2; python_version < "3.13"
+sounddevice>=0.5.5
+pytest==8.4.1
+coverage==7.9.1
