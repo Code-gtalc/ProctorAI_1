@@ -206,20 +206,162 @@ class MicrophoneVoiceMonitor:
         return self.current_rms() >= self.threshold
 
 
-def draw_overlay(frame: np.ndarray, lines: list[str]) -> None:
+class OverlayUIState:
+    def __init__(self, persistence_s: float = 0.7) -> None:
+        self.debug_mode = False
+        self.visible = True
+        self.persistence_s = persistence_s
+        self._last_normal_update = 0.0
+        self._normal_cache = {
+            "audio": "SILENT",
+            "lips": "STILL",
+            "sync": "UNCERTAIN",
+            "risk": "LOW",
+        }
+
+    def handle_key(self, key: int) -> bool:
+        if key in (ord("d"), ord("D")):
+            self.debug_mode = not self.debug_mode
+            return False
+        if key in (ord("h"), ord("H")):
+            self.visible = not self.visible
+            return False
+        return key in (ord("q"), ord("Q"))
+
+    def smoothed_normal(self, now_s: float, current: dict[str, str]) -> dict[str, str]:
+        if (now_s - self._last_normal_update) >= self.persistence_s:
+            self._normal_cache = current
+            self._last_normal_update = now_s
+        return self._normal_cache
+
+
+def draw_rounded_rect(img: np.ndarray, x: int, y: int, w: int, h: int, radius: int, color: tuple[int, int, int]) -> None:
+    radius = max(1, min(radius, w // 2, h // 2))
+    cv2.rectangle(img, (x + radius, y), (x + w - radius, y + h), color, -1)
+    cv2.rectangle(img, (x, y + radius), (x + w, y + h - radius), color, -1)
+    cv2.circle(img, (x + radius, y + radius), radius, color, -1)
+    cv2.circle(img, (x + w - radius, y + radius), radius, color, -1)
+    cv2.circle(img, (x + radius, y + h - radius), radius, color, -1)
+    cv2.circle(img, (x + w - radius, y + h - radius), radius, color, -1)
+
+
+def draw_transparent_panel(
+    frame: np.ndarray,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    alpha: float = 0.42,
+    radius: int = 12
+) -> None:
+    overlay = frame.copy()
+    draw_rounded_rect(overlay, x, y, w, h, radius, (0, 0, 0))
+    cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
+
+
+def status_color(value: str) -> tuple[int, int, int]:
+    green = (60, 220, 90)
+    yellow = (0, 215, 255)
+    red = (0, 80, 255)
+    gray = (150, 150, 150)
+    normalized = value.upper()
+    if normalized in {"SYNCED", "LOW", "SPEAKING", "MOVING", "OK"}:
+        return green
+    if normalized in {"MEDIUM", "UNCERTAIN", "STILL", "HIDDEN"}:
+        return yellow
+    if normalized in {"HIGH", "NOT_SYNCED", "ERROR"}:
+        return red
+    return gray
+
+
+def build_normal_overlay_status(
+    audio_activity: bool,
+    lips_detected: bool,
+    lip_activity: bool,
+    mouth_hidden: bool,
+    mouth_occluded: bool,
+    sync_status: str
+) -> dict[str, str]:
+    audio_status = "SPEAKING" if audio_activity else "SILENT"
+
+    if mouth_occluded or mouth_hidden or (not lips_detected):
+        lips_status = "HIDDEN"
+    else:
+        lips_status = "MOVING" if lip_activity else "STILL"
+
+    if sync_status in {"SYNCED", "QUIET"}:
+        sync_view = "SYNCED"
+    elif sync_status in {"NOT_SYNCED", "MOUTH_HIDDEN", "MOUTH_OCCLUDED", "GATED_OUT"}:
+        sync_view = "NOT_SYNCED"
+    else:
+        sync_view = "UNCERTAIN"
+
+    if mouth_occluded or (audio_activity and (not lips_detected) and (not mouth_hidden)):
+        risk = "HIGH"
+    elif sync_view == "NOT_SYNCED":
+        risk = "MEDIUM"
+    else:
+        risk = "LOW"
+
+    return {
+        "audio": audio_status,
+        "lips": lips_status,
+        "sync": sync_view,
+        "risk": risk,
+    }
+
+
+def draw_normal_overlay(frame: np.ndarray, status: dict[str, str]) -> None:
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.5
+    h, w = frame.shape[:2]
+    panel_h = 48
+    x = 12
+    y = h - panel_h - 12
+    panel_w = min(w - 24, 860)
+    draw_transparent_panel(frame, x, y, panel_w, panel_h, alpha=0.45, radius=14)
+
+    labels = [
+        ("Audio", status["audio"]),
+        ("Lips", status["lips"]),
+        ("Sync", status["sync"]),
+        ("Integrity Risk", status["risk"]),
+    ]
+    cursor_x = x + 16
+    baseline_y = y + 31
+    for title, value in labels:
+        left = f"{title}: "
+        cv2.putText(frame, left, (cursor_x, baseline_y), font, 0.55, (200, 200, 200), 1, cv2.LINE_AA)
+        text_size, _ = cv2.getTextSize(left, font, 0.55, 1)
+        cursor_x += text_size[0]
+        cv2.putText(frame, value, (cursor_x, baseline_y), font, 0.58, status_color(value), 2, cv2.LINE_AA)
+        value_size, _ = cv2.getTextSize(value, font, 0.58, 2)
+        cursor_x += value_size[0] + 20
+
+
+def draw_debug_overlay(frame: np.ndarray, lines: list[str]) -> None:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.45
     thickness = 1
     h, w = frame.shape[:2]
-    box_width = min(620, max(340, w - 30))
-    x = max(10, w - box_width - 10)
-    y = 25
-    line_h = 20
-    box_h = line_h * len(lines) + 12
-    cv2.rectangle(frame, (x - 8, 6), (x + box_width, box_h), (0, 0, 0), -1)
-    cv2.rectangle(frame, (x - 8, 6), (x + box_width, box_h), (0, 255, 0), 1)
-    for idx, text in enumerate(lines):
-        cv2.putText(frame, text, (x, y + (idx * line_h)), font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
+    line_h = 18
+    box_w = min(760, max(420, w - 28))
+    x = max(8, w - box_w - 10)
+    y = 8
+    box_h = min(h - 16, line_h * len(lines) + 16)
+    draw_transparent_panel(frame, x, y, box_w, box_h, alpha=0.44, radius=12)
+
+    text_y = y + 18
+    max_lines = max(1, (box_h - 12) // line_h)
+    for idx, text in enumerate(lines[:max_lines]):
+        color = (200, 200, 200)
+        upper = text.upper()
+        if "SYNCED" in upper or "VALID" in upper or "MIC: OK" in upper:
+            color = (60, 220, 90)
+        elif "NOT_SYNCED" in upper or "ERROR" in upper or "NO_FACE" in upper:
+            color = (0, 80, 255)
+        elif "UNCERTAIN" in upper or "HIDDEN" in upper or "GATED_OUT" in upper:
+            color = (0, 215, 255)
+        cv2.putText(frame, text, (x + 12, text_y + idx * line_h), font, font_scale, color, thickness, cv2.LINE_AA)
 
 
 def ema(previous: float, current: float, alpha: float) -> float:
@@ -592,6 +734,7 @@ def run_live_voice_overlay() -> None:
     feature_w = deque(maxlen=WINDOW_SIZE)
     last_speak = None
     session_start = time.time()
+    ui_state = OverlayUIState(persistence_s=0.7)
 
     try:
         while True:
@@ -786,7 +929,7 @@ def run_live_voice_overlay() -> None:
             else:
                 sync_status = majority_sync_status(rule_status, optical_status, corr_status)
 
-            lines = [
+            debug_lines = [
                 f"Audio Voice: {'SPEAKING' if audio_activity else 'SILENT'}",
                 f"Audio RMS: {smoothed_audio_rms:.5f} (thr={MIC_THRESHOLD:.5f})",
                 "Mouth Occluded: YES" if mouth_occluded else f"Lips Detected: {'YES' if lips_detected else 'NO'}",
@@ -803,12 +946,26 @@ def run_live_voice_overlay() -> None:
                 f"Vision Backend: {vision_backend}",
                 f"Hands Backend: {hands_backend}",
                 "Mic: ERROR (check device/index)" if mic_error else "Mic: OK",
-                "Press Q to quit",
+                "Controls: D=Normal/Debug, H=Hide/Show, Q=Quit",
             ]
-            draw_overlay(frame, lines)
+            normal_status = build_normal_overlay_status(
+                audio_activity=audio_activity,
+                lips_detected=lips_detected,
+                lip_activity=lip_activity,
+                mouth_hidden=mouth_hidden,
+                mouth_occluded=mouth_occluded,
+                sync_status=sync_status
+            )
+            normal_status = ui_state.smoothed_normal(t, normal_status)
+            if ui_state.visible:
+                if ui_state.debug_mode:
+                    draw_debug_overlay(frame, debug_lines)
+                else:
+                    draw_normal_overlay(frame, normal_status)
             cv2.imshow("Live Voice + LipSync Overlay", frame)
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            key = cv2.waitKey(1) & 0xFF
+            if ui_state.handle_key(key):
                 break
     finally:
         mic.stop()
