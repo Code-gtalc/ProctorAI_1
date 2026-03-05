@@ -68,10 +68,28 @@ class GazeEngine:
         this_file = Path(__file__).resolve()
         outer_root = this_file.parents[2]
         inner_root = this_file.parents[1]
-        return [
-            outer_root / "ProctorGuardAI-master" / "proctorguard_mahalanobis.py",
+        candidates = [
             inner_root / "ProctorGuardAI-master" / "proctorguard_mahalanobis.py",
+            outer_root / "ProctorGuardAI-master" / "proctorguard_mahalanobis.py",
         ]
+        for root in (inner_root, outer_root):
+            for d in root.iterdir():
+                if not d.is_dir():
+                    continue
+                name = d.name.lower()
+                if "proctor" in name and "guard" in name and "master" in name:
+                    p = d / "proctorguard_mahalanobis.py"
+                    if p.exists():
+                        candidates.append(p)
+        # Keep order while removing duplicates.
+        deduped: list[Path] = []
+        seen: set[str] = set()
+        for c in candidates:
+            key = str(c.resolve())
+            if key not in seen:
+                seen.add(key)
+                deduped.append(c)
+        return deduped
 
     def _import_external_module(self) -> tuple[bool, str]:
         import_errors: list[str] = []

@@ -86,7 +86,7 @@
       box-shadow: 0 0 0 8px rgba(0, 109, 119, 0.16);
       position: absolute;
       transform: translate(-50%, -50%);
-      transition: left 0.25s ease, top 0.25s ease;
+      transition: left 2.8s linear, top 2.8s linear;
       animation: pulse 1.3s ease-in-out infinite;
     }
 
@@ -260,6 +260,43 @@
       background: linear-gradient(90deg, #e95c43, #f4b740 45%, #12a150);
     }
 
+    .event-wrap {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #0b0f14;
+    }
+
+    .event-head {
+      padding: 7px 10px;
+      background: #111922;
+      border-bottom: 1px solid #223042;
+      color: #a2b8cf;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .event-console {
+      height: 210px;
+      overflow-y: auto;
+      padding: 8px 10px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: #c7d8ea;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-line { margin: 0 0 3px; }
+    .log-info { color: #9fd0ff; }
+    .log-ok { color: #73e3b2; }
+    .log-warn { color: #f4cf7a; }
+    .log-err { color: #ff9aa8; }
+
     .ok { background: rgba(15, 157, 88, 0.14); border-color: rgba(15, 157, 88, 0.3); color: #0f7f47; }
     .warn { background: rgba(216, 137, 7, 0.14); border-color: rgba(216, 137, 7, 0.3); color: #9b6303; }
     .err { background: rgba(207, 47, 69, 0.14); border-color: rgba(207, 47, 69, 0.3); color: #a42336; }
@@ -285,7 +322,6 @@
         <span id="calibStatus" class="badge warn">Waiting to start</span>
         <div>
           <button id="startCalibBtn" class="btn">Start Calibration</button>
-          <button id="skipCalibBtn" class="btn" style="background:#7d8da1;">Skip</button>
         </div>
       </div>
     </section>
@@ -313,6 +349,10 @@
             <div class="slot"><div class="k">Last Flag</div><div id="lastReason" class="v">none</div></div>
             <div class="slot"><div class="k">Flag Details</div><div id="lastDetails" class="v">-</div></div>
             <div class="slot"><div class="k">Error</div><div id="err" class="v">-</div></div>
+          </div>
+          <div class="event-wrap">
+            <div class="event-head">Live Event Logs</div>
+            <div id="eventConsole" class="event-console"></div>
           </div>
         </article>
 
@@ -346,7 +386,6 @@
     const calibInstruction = document.getElementById("calibInstruction");
     const calibStatus = document.getElementById("calibStatus");
     const startCalibBtn = document.getElementById("startCalibBtn");
-    const skipCalibBtn = document.getElementById("skipCalibBtn");
     const target = document.getElementById("target");
 
     const userIdEl = document.getElementById("userId");
@@ -375,9 +414,11 @@
     const lastReasonEl = document.getElementById("lastReason");
     const lastDetailsEl = document.getElementById("lastDetails");
     const frameEl = document.getElementById("camFrame");
+    const eventConsoleEl = document.getElementById("eventConsole");
 
     let latestState = {};
     let pollTimer = null;
+    let prevState = null;
 
     function fmt(v) {
       if (v === null || v === undefined) return "-";
@@ -389,6 +430,39 @@
     function styleBadge(el, mode) { el.className = `badge ${mode}`; }
     function styleValue(el, mode) { el.className = `v ${mode}`; }
     function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+    function ts() { return new Date().toLocaleTimeString(); }
+
+    function appendLog(level, message) {
+      const line = document.createElement("div");
+      const cls = (level === "ERROR") ? "log-err" : (level === "WARN" ? "log-warn" : (level === "OK" ? "log-ok" : "log-info"));
+      line.className = `log-line ${cls}`;
+      line.textContent = `[${ts()}] [${level}] ${message}`;
+      eventConsoleEl.appendChild(line);
+      while (eventConsoleEl.children.length > 220) {
+        eventConsoleEl.removeChild(eventConsoleEl.firstChild);
+      }
+      eventConsoleEl.scrollTop = eventConsoleEl.scrollHeight;
+    }
+
+    function streamStateLogs(s) {
+      if (!prevState) {
+        prevState = { ...s };
+        return;
+      }
+
+      const prevFlags = Number(prevState.flags || 0);
+      const currFlags = Number(s.flags || 0);
+      if (currFlags > prevFlags) {
+        const delta = currFlags - prevFlags;
+        const deltaText = delta > 1 ? ` (+${delta} new)` : "";
+        appendLog(
+          "WARN",
+          `Flag raised${deltaText}: ${s.last_flag_reason || "UNKNOWN"} | Why: ${s.last_flag_details || "-"} | Risk=${s.risk_score || 0} (${s.risk_level || "NORMAL"})`
+        );
+      }
+
+      prevState = { ...s };
+    }
 
     async function startMonitoring(userId) {
       const resp = await fetch("/api/monitor/start", {
@@ -406,6 +480,7 @@
       const resp = await fetch("/api/monitor/state");
       const s = await resp.json();
       latestState = s;
+      streamStateLogs(s);
 
       userIdEl.textContent = s.user_id || "-";
       facesEl.textContent = String(s.faces ?? 0);
@@ -493,24 +568,24 @@
 
     async function runCalibrationGuide() {
       const targets = [
-        { name: "CENTER", x: 50, y: 50 },
-        { name: "LEFT EDGE", x: 10, y: 50 },
-        { name: "RIGHT EDGE", x: 90, y: 50 },
-        { name: "TOP EDGE", x: 50, y: 14 },
-        { name: "BOTTOM EDGE", x: 50, y: 86 },
+        { name: "CENTER", x: 50, y: 50, holdMs: 2200 },
+        { name: "TOP LEFT CORNER", x: 8, y: 8, holdMs: 3200 },
+        { name: "TOP RIGHT CORNER", x: 92, y: 8, holdMs: 3200 },
+        { name: "BOTTOM RIGHT CORNER", x: 92, y: 92, holdMs: 3200 },
+        { name: "BOTTOM LEFT CORNER", x: 8, y: 92, holdMs: 3200 },
+        { name: "CENTER", x: 50, y: 50, holdMs: 2600 },
       ];
 
       target.classList.remove("hidden");
       calibStatus.textContent = "Calibration running";
       styleBadge(calibStatus, "warn");
       startCalibBtn.disabled = true;
-      skipCalibBtn.disabled = true;
 
       for (const t of targets) {
         target.style.left = `${t.x}%`;
         target.style.top = `${t.y}%`;
-        calibInstruction.textContent = `Look at ${t.name}. Keep your head stable and move eyes only.`;
-        await sleep(1800);
+        calibInstruction.textContent = `Follow the dot slowly to ${t.name}. Keep your head stable and move eyes only.`;
+        await sleep(t.holdMs);
       }
 
       calibInstruction.textContent = "Finishing calibration. Hold center for a moment.";
@@ -546,10 +621,6 @@
       pollTimer = setInterval(pollState, 650);
 
       startCalibBtn.addEventListener("click", runCalibrationGuide, { once: true });
-      skipCalibBtn.addEventListener("click", () => {
-        calibScreen.classList.add("hidden");
-        dashboard.classList.remove("hidden");
-      }, { once: true });
     }
 
     boot().catch((e) => {
