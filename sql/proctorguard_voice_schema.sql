@@ -39,3 +39,14 @@ CREATE TABLE IF NOT EXISTS runtime_voice_matches (
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS gaze_calibrations (
+    user_id TEXT PRIMARY KEY,
+    mean_gaze TEXT NOT NULL,
+    inv_cov TEXT NOT NULL,
+    h_threshold REAL NOT NULL,
+    v_threshold REAL NOT NULL,
+    calibrated_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(user_id)
+);
+

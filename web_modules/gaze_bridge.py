@@ -5,7 +5,7 @@ import importlib.util
 import os
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -44,6 +44,8 @@ class GazeEngine:
         head_weight: float = 0.015,
         geometric_margin: float = 1.2,
         adapt_rate: float = 0.01,
+        store: Optional[Any] = None,
+        user_id: str = "",
     ) -> None:
         self.learning_frames = learning_frames
         self.smoothing = smoothing
@@ -52,6 +54,10 @@ class GazeEngine:
         self.head_weight = head_weight
         self.geometric_margin = geometric_margin
         self.adapt_rate = adapt_rate
+
+        # Per-user calibration persistence via VoiceBiometricStore
+        self._store = store  # VoiceBiometricStore instance (or None)
+        self._user_id: str = user_id
 
         self._module = None
         self._module_dir: Path | None = None
@@ -161,6 +167,18 @@ class GazeEngine:
         self._calibration_file = str(getattr(self._module, "CALIBRATION_FILE", self._calibration_file))
 
     def _load_saved_calibration(self) -> None:
+        # ── Per-user calibration from DB (preferred) ──
+        if self._store is not None and self._user_id:
+            saved = self._store.load_gaze_calibration(self._user_id)
+            if saved:
+                self._mean_gaze = np.array(saved["mean_gaze"], dtype=np.float32)
+                self._inv_cov = np.array(saved["inv_cov"], dtype=np.float32)
+                self._h_threshold = float(saved["H_THRESHOLD"])
+                self._v_threshold = float(saved["V_THRESHOLD"])
+                self._calib_index = len(self._calibration_steps)
+                return  # loaded successfully — skip legacy file
+
+        # ── Legacy global file fallback ──
         if self._module is None:
             return
         loader = getattr(self._module, "load_calibration", None)
@@ -200,6 +218,49 @@ class GazeEngine:
         self._ready = True
         self._error = ""
         return True, msg
+
+    def set_user(self, user_id: str) -> tuple[bool, str]:
+        """Switch to *user_id*.
+
+        * If the user already has saved gaze calibration in the DB, load it
+          (no re-calibration needed).
+        * If not, reset calibration state so the UI will prompt the new user
+          to complete a fresh gaze calibration — just like voice enrollment
+          requires each new user to record answers.
+        """
+        previous_user = self._user_id
+        self._user_id = user_id
+
+        # Always reset runtime gaze state for a clean slate
+        self._mean_gaze = None
+        self._inv_cov = None
+        self._h_threshold = 0.0
+        self._v_threshold = 0.0
+        self._learning_samples = []
+        self._outside_counter = 0
+        self._prev_dx = 0.0
+        self._prev_dy = 0.0
+        self._confidence_history = []
+        self._current_status = "INSIDE"
+        self._calib_index = 0
+        self._start_pressed = False
+        self._start_time = None
+        self._capturing = False
+        self._frames_captured = 0
+        self._error = ""
+
+        # Try to load this user's saved calibration from the DB
+        if self._store is not None and user_id:
+            saved = self._store.load_gaze_calibration(user_id)
+            if saved:
+                self._mean_gaze = np.array(saved["mean_gaze"], dtype=np.float32)
+                self._inv_cov = np.array(saved["inv_cov"], dtype=np.float32)
+                self._h_threshold = float(saved["H_THRESHOLD"])
+                self._v_threshold = float(saved["V_THRESHOLD"])
+                self._calib_index = len(self._calibration_steps)
+                return True, f"Loaded saved gaze calibration for user {user_id}."
+
+        return True, f"No saved gaze calibration for user {user_id}. Calibration required."
 
     def calibration_state(self) -> dict[str, Any]:
         step = self._calibration_steps[self._calib_index] if self._calib_index < len(self._calibration_steps) else ""
@@ -242,10 +303,15 @@ class GazeEngine:
 
     def reset_calibration(self, delete_saved: bool = True) -> tuple[bool, str, dict[str, Any]]:
         try:
-            if delete_saved and self._module_dir is not None:
-                calib_path = self._module_dir / self._calibration_file
-                if calib_path.exists():
-                    calib_path.unlink()
+            if delete_saved:
+                # Delete per-user calibration from DB
+                if self._store is not None and self._user_id:
+                    self._store.delete_gaze_calibration(self._user_id)
+                # Delete legacy global .npz file
+                if self._module_dir is not None:
+                    calib_path = self._module_dir / self._calibration_file
+                    if calib_path.exists():
+                        calib_path.unlink()
         except Exception as exc:  # noqa: BLE001
             self._error = f"Unable to reset saved calibration: {exc}"
             return False, self._error, self.calibration_state()
@@ -285,6 +351,18 @@ class GazeEngine:
         vertical_scores = np.abs(samples[:, 1]) + self.head_weight * np.abs(samples[:, 3])
         self._h_threshold = float(np.percentile(horizontal_scores, 95) * self.geometric_margin)
         self._v_threshold = float(np.percentile(vertical_scores, 95) * self.geometric_margin)
+
+        # ── Persist per-user calibration to DB ──
+        if self._store is not None and self._user_id:
+            self._store.save_gaze_calibration(
+                user_id=self._user_id,
+                mean_gaze=self._mean_gaze,
+                inv_cov=self._inv_cov,
+                h_threshold=self._h_threshold,
+                v_threshold=self._v_threshold,
+            )
+
+        # ── Legacy global .npz save (kept for standalone / CLI usage) ──
         saver = getattr(self._module, "save_calibration", None) if self._module is not None else None
         if callable(saver):
             old_cwd = Path.cwd()
@@ -294,6 +372,7 @@ class GazeEngine:
                 saver(self._mean_gaze, self._inv_cov, self._h_threshold, self._v_threshold)
             finally:
                 os.chdir(old_cwd)
+
         self._calib_index = len(self._calibration_steps)
         self._start_pressed = False
         self._start_time = None

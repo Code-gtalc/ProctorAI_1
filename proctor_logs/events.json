@@ -1,19 +1,6 @@
 {
-  "generated_at": "2026-03-06T13:50:33.753482+00:00",
-  "risk_score": 1,
+  "generated_at": "2026-03-06T23:39:18.087287+00:00",
+  "risk_score": 0,
   "risk_level": "NORMAL",
-  "events": [
-    {
-      "timestamp_s": 1772805026.4551373,
-      "reason": "GAZE_OUTSIDE",
-      "risk_delta": 1,
-      "risk_total": 1,
-      "frame_path": "proctor_logs\\frames\\1772805026455_gaze_outside.jpg",
-      "audio_path": "proctor_logs\\audio\\1772805026455_gaze_outside.wav",
-      "details": {
-        "gaze_confidence": 0.0,
-        "gaze_status": "OUTSIDE"
-      }
-    }
-  ]
+  "events": []
 }
