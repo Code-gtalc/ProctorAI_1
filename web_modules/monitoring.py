@@ -348,9 +348,12 @@ class MonitoringWorker:
             face_mesh, _ = create_face_mesh_backend()
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
             face_cascade_alt = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml")
-            gaze_engine = GazeEngine()
+            gaze_engine = GazeEngine(store=self.store, user_id=self._user_id)
             self._gaze_engine = gaze_engine
             gaze_ok, gaze_message = gaze_engine.start()
+            if gaze_ok:
+                # Load per-user calibration (or reset for fresh calibration)
+                gaze_engine.set_user(self._user_id)
             gaze_cache = GazeReading(
                 status="DISABLED" if not gaze_ok else ("INSIDE" if gaze_engine.calibrated else "CALIBRATING"),
                 confidence=0.0,

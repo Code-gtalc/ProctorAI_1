@@ -118,6 +118,16 @@ class VoiceBiometricStore:
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS gaze_calibrations (
+                    user_id TEXT PRIMARY KEY,
+                    mean_gaze TEXT NOT NULL,
+                    inv_cov TEXT NOT NULL,
+                    h_threshold REAL NOT NULL,
+                    v_threshold REAL NOT NULL,
+                    calibrated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                );
                 """
             )
 
@@ -255,4 +265,94 @@ class VoiceBiometricStore:
                 """,
                 (user_id, float(timestamp_s), similarity, drift, decision, reason, _utc_now_iso()),
             )
+
+    # ------------------------------------------------------------------
+    # Per-user gaze calibration persistence
+    # ------------------------------------------------------------------
+
+    _gaze_table_ok = False  # class-level flag so the check runs at most once
+
+    def _ensure_gaze_table(self) -> None:
+        """Idempotent migration: create gaze_calibrations if missing.
+
+        Handles the case where an older proctorguard.db was created before
+        per-user gaze calibration was added.
+        """
+        if VoiceBiometricStore._gaze_table_ok:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gaze_calibrations (
+                    user_id       TEXT PRIMARY KEY,
+                    mean_gaze     TEXT NOT NULL,
+                    inv_cov       TEXT NOT NULL,
+                    h_threshold   REAL NOT NULL,
+                    v_threshold   REAL NOT NULL,
+                    calibrated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                )
+                """
+            )
+        VoiceBiometricStore._gaze_table_ok = True
+
+    def save_gaze_calibration(
+        self,
+        user_id: str,
+        mean_gaze: np.ndarray,
+        inv_cov: np.ndarray,
+        h_threshold: float,
+        v_threshold: float,
+    ) -> None:
+        """Persist gaze calibration data for *user_id* (upsert)."""
+        self._ensure_gaze_table()
+        self.upsert_user(user_id)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gaze_calibrations(user_id, mean_gaze, inv_cov, h_threshold, v_threshold, calibrated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    mean_gaze=excluded.mean_gaze,
+                    inv_cov=excluded.inv_cov,
+                    h_threshold=excluded.h_threshold,
+                    v_threshold=excluded.v_threshold,
+                    calibrated_at=excluded.calibrated_at
+                """,
+                (
+                    user_id,
+                    _json_dumps({"v": mean_gaze.tolist()}),
+                    _json_dumps({"v": inv_cov.tolist()}),
+                    float(h_threshold),
+                    float(v_threshold),
+                    _utc_now_iso(),
+                ),
+            )
+
+    def load_gaze_calibration(self, user_id: str) -> Optional[dict[str, Any]]:
+        """Return saved gaze calibration for *user_id*, or ``None``."""
+        self._ensure_gaze_table()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT mean_gaze, inv_cov, h_threshold, v_threshold
+                FROM gaze_calibrations
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "mean_gaze": np.array(json.loads(str(row["mean_gaze"]))["v"], dtype=np.float32),
+            "inv_cov": np.array(json.loads(str(row["inv_cov"]))["v"], dtype=np.float32),
+            "H_THRESHOLD": float(row["h_threshold"]),
+            "V_THRESHOLD": float(row["v_threshold"]),
+        }
+
+    def delete_gaze_calibration(self, user_id: str) -> None:
+        """Remove saved gaze calibration for *user_id*."""
+        self._ensure_gaze_table()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM gaze_calibrations WHERE user_id = ?", (user_id,))
 
