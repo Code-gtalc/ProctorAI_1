@@ -9,6 +9,8 @@ from voice_features import extract_voice_features
 from web_modules.enrollment import EnrollmentApi, read_wav_bytes, save_wav, utc_now_iso
 from web_modules.monitoring import MonitoringWorker
 
+MIN_ENROLLMENT_AUDIO_SECONDS = 7.0
+
 
 def create_app() -> Flask:
     project_root = Path(__file__).resolve().parents[1]
@@ -100,6 +102,10 @@ def create_app() -> Flask:
 
         if audio.size == 0:
             return jsonify({"error": "No audio input detected"}), 400
+
+        duration_seconds = float(audio.size) / float(max(1, sample_rate))
+        if duration_seconds < MIN_ENROLLMENT_AUDIO_SECONDS:
+            return jsonify({"error": f"Each voice answer must be at least {int(MIN_ENROLLMENT_AUDIO_SECONDS)} seconds."}), 400
 
         audio_path = Path("proctor_data") / "enrollment_audio" / user_id / f"{question_id}_{timestamp_iso.replace(':', '-')}.wav"
         save_wav(audio, sample_rate, audio_path)

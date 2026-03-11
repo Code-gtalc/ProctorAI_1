@@ -56,7 +56,7 @@ class VoiceEnrollmentService:
         self.audio_dir = Path(audio_dir)
 
     def questions(self) -> list[dict[str, str]]:
-        return self.store.get_questions()
+        return [{"question_id": q.question_id, "text": q.text} for q in ENROLLMENT_QUESTIONS]
 
     def enroll_user(self, user_id: str, samples: list[EnrollmentAudioSample]) -> EnrollmentResult:
         question_ids = {q.question_id for q in ENROLLMENT_QUESTIONS}

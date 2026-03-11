@@ -9,17 +9,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #f2f5f9;
-      --text: #142132;
-      --muted: #5f7085;
-      --surface: #ffffff;
-      --surface-2: #edf3f9;
-      --line: #d5dee9;
-      --accent: #006d77;
-      --ok: #0f9d58;
-      --warn: #d88907;
-      --err: #cf2f45;
-      --shadow: 0 10px 25px rgba(18, 36, 58, 0.08);
+      --bg: #070a12;
+      --text: #e7edf7;
+      --muted: #9ca9bf;
+      --surface: #0f1625;
+      --surface-2: #141f33;
+      --line: #26354f;
+      --accent: #36c9ff;
+      --ok: #1db879;
+      --warn: #f0a514;
+      --err: #ff5d6f;
+      --shadow: 0 18px 38px rgba(0, 0, 0, 0.42);
     }
 
     * { box-sizing: border-box; }
@@ -28,15 +28,15 @@
       font-family: "Manrope", "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(1200px 500px at 0% -10%, #d6eef2 0%, transparent 65%),
-        radial-gradient(900px 500px at 100% -20%, #f5e9d0 0%, transparent 68%),
+        radial-gradient(1100px 520px at 0% -10%, rgba(54, 201, 255, 0.16) 0%, transparent 65%),
+        radial-gradient(900px 540px at 100% -20%, rgba(168, 94, 255, 0.12) 0%, transparent 70%),
         var(--bg);
       min-height: 100vh;
       padding: 20px;
     }
 
     .shell {
-      max-width: 1320px;
+      max-width: none;
       margin: 0 auto;
       display: grid;
       gap: 16px;
@@ -50,7 +50,7 @@
       border-radius: 16px;
       box-shadow: var(--shadow);
       padding: 16px;
-      min-height: 72vh;
+      min-height: calc(100vh - 40px);
       display: grid;
       grid-template-rows: auto 1fr auto;
       gap: 14px;
@@ -70,11 +70,27 @@
     }
 
     .calib-space {
-      border: 1px dashed var(--line);
+      border: 1px solid var(--line);
       border-radius: 12px;
-      background: linear-gradient(180deg, #f8fbff, #eef4fb);
+      background:
+        radial-gradient(1000px 420px at 50% 50%, rgba(54, 201, 255, 0.08), transparent 70%),
+        repeating-linear-gradient(
+          0deg,
+          rgba(156, 169, 191, 0.06),
+          rgba(156, 169, 191, 0.06) 1px,
+          transparent 1px,
+          transparent 28px
+        ),
+        repeating-linear-gradient(
+          90deg,
+          rgba(156, 169, 191, 0.06),
+          rgba(156, 169, 191, 0.06) 1px,
+          transparent 1px,
+          transparent 28px
+        ),
+        #0a101d;
       position: relative;
-      min-height: 420px;
+      min-height: calc(100vh - 240px);
       display: grid;
       place-items: center;
       overflow: hidden;
@@ -82,20 +98,24 @@
 
     .target-grid {
       position: absolute;
-      inset: 16px;
+      inset: 0;
       pointer-events: none;
     }
 
     .target {
-      width: 26px;
-      height: 26px;
+      width: 44px;
+      height: 44px;
       border-radius: 999px;
-      border: 2px solid #fff;
-      background: var(--accent);
-      box-shadow: 0 0 0 8px rgba(0, 109, 119, 0.16);
+      border: 3px solid #f4f9ff;
+      background: radial-gradient(circle at 35% 35%, #ffffff 8%, #8ee6ff 28%, #36c9ff 70%, #0d8fca 100%);
+      box-shadow:
+        0 0 0 10px rgba(54, 201, 255, 0.14),
+        0 0 42px rgba(54, 201, 255, 0.55),
+        0 0 80px rgba(54, 201, 255, 0.38);
       position: absolute;
       transform: translate(-50%, -50%);
       transition: left 0.35s ease, top 0.35s ease, opacity 0.2s ease, transform 0.2s ease;
+      z-index: 4;
     }
 
     .target.active {
@@ -105,24 +125,29 @@
 
     .target-label {
       position: absolute;
-      top: 18px;
-      left: 18px;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
       padding: 8px 12px;
       border-radius: 999px;
-      background: rgba(20, 33, 50, 0.86);
-      color: #fff;
+      background: rgba(5, 12, 22, 0.82);
+      border: 1px solid rgba(54, 201, 255, 0.26);
+      color: #e8f6ff;
       font-size: 0.82rem;
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      z-index: 4;
     }
 
     .calib-panel {
       position: relative;
       z-index: 1;
-      width: min(540px, calc(100% - 32px));
-      background: rgba(255, 255, 255, 0.94);
-      border: 1px solid rgba(213, 222, 233, 0.95);
+      width: min(620px, calc(100% - 32px));
+      align-self: end;
+      margin-bottom: 10px;
+      background: rgba(8, 14, 26, 0.82);
+      border: 1px solid rgba(54, 201, 255, 0.22);
       border-radius: 16px;
       box-shadow: var(--shadow);
       padding: 18px;
@@ -155,8 +180,8 @@
     }
 
     .btn.secondary {
-      background: #e4edf6;
-      color: var(--text);
+      background: #1a2841;
+      color: #dbe8ff;
       border: 1px solid var(--line);
     }
 
@@ -166,9 +191,9 @@
     }
 
     @keyframes pulse {
-      0% { box-shadow: 0 0 0 8px rgba(0, 109, 119, 0.16); }
-      50% { box-shadow: 0 0 0 14px rgba(0, 109, 119, 0.08); }
-      100% { box-shadow: 0 0 0 8px rgba(0, 109, 119, 0.16); }
+      0% { box-shadow: 0 0 0 10px rgba(54, 201, 255, 0.16), 0 0 38px rgba(54, 201, 255, 0.52); }
+      50% { box-shadow: 0 0 0 17px rgba(54, 201, 255, 0.08), 0 0 54px rgba(54, 201, 255, 0.40); }
+      100% { box-shadow: 0 0 0 10px rgba(54, 201, 255, 0.16), 0 0 38px rgba(54, 201, 255, 0.52); }
     }
 
     .calib-footer {
@@ -195,8 +220,8 @@
       border-radius: 10px;
       padding: 8px 13px;
       font-weight: 700;
-      background: var(--accent);
-      color: #fff;
+      background: linear-gradient(135deg, #1fa9dd, #23c9e9);
+      color: #062032;
       cursor: pointer;
     }
 
@@ -372,9 +397,9 @@
     .log-warn { color: #f4cf7a; }
     .log-err { color: #ff9aa8; }
 
-    .ok { background: rgba(15, 157, 88, 0.14); border-color: rgba(15, 157, 88, 0.3); color: #0f7f47; }
-    .warn { background: rgba(216, 137, 7, 0.14); border-color: rgba(216, 137, 7, 0.3); color: #9b6303; }
-    .err { background: rgba(207, 47, 69, 0.14); border-color: rgba(207, 47, 69, 0.3); color: #a42336; }
+    .ok { background: rgba(29, 184, 121, 0.16); border-color: rgba(29, 184, 121, 0.36); color: #80ffc9; }
+    .warn { background: rgba(240, 165, 20, 0.16); border-color: rgba(240, 165, 20, 0.36); color: #ffd888; }
+    .err { background: rgba(255, 93, 111, 0.16); border-color: rgba(255, 93, 111, 0.36); color: #ffb0ba; }
 
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
@@ -388,15 +413,15 @@
     <section id="calibScreen" class="calib">
       <div>
         <h1>Eye Calibration</h1>
-        <p id="calibInstruction">The web app now follows the `ProctorGuardAI-master/chunks.py` calibration flow. Keep your head steady, look at the highlighted point, and press Start for each step.</p>
+        <p id="calibInstruction">Keep your head steady and move only your eyes to the glowing dot. Follow center, extreme-left, extreme-right, top, and bottom points to capture full screen gaze coverage.</p>
       </div>
       <div id="calibSpace" class="calib-space">
         <div class="target-grid">
           <div id="targetCenter" class="target hidden" style="left: 50%; top: 50%;"></div>
-          <div id="targetLeft" class="target hidden" style="left: 12%; top: 50%;"></div>
-          <div id="targetRight" class="target hidden" style="left: 88%; top: 50%;"></div>
-          <div id="targetTop" class="target hidden" style="left: 50%; top: 14%;"></div>
-          <div id="targetBottom" class="target hidden" style="left: 50%; top: 86%;"></div>
+          <div id="targetLeft" class="target hidden" style="left: 2.5%; top: 50%;"></div>
+          <div id="targetRight" class="target hidden" style="left: 97.5%; top: 50%;"></div>
+          <div id="targetTop" class="target hidden" style="left: 50%; top: 3.5%;"></div>
+          <div id="targetBottom" class="target hidden" style="left: 50%; top: 96.5%;"></div>
           <div id="targetStepLabel" class="target-label hidden">CENTER</div>
         </div>
         <div class="calib-panel">

@@ -58,7 +58,7 @@ class EnrollmentApi:
             self.store.mark_incomplete(user_id)
             return {
                 "enrollment_complete": False,
-                "error": "All 10 questions must be recorded before completion.",
+                "error": "All 3 questions must be recorded before completion.",
             }
 
         profile = self.service._build_profile(user_id, features_by_q)  # noqa: SLF001

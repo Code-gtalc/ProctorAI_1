@@ -143,8 +143,8 @@
 <body>
   <div id="enrollmentScreen" class="screen">
     <section class="main">
-      <div class="top" id="progress">Question 1 of 10</div>
-      <div class="instruction">Please read the following question aloud clearly.</div>
+      <div class="top" id="progress">Question 1 of 3</div>
+      <div class="instruction">Please read the prompt aloud clearly. Each recording must be at least 7 seconds.</div>
       <div class="question" id="questionText">Loading...</div>
       <div class="video-wrap"><video id="cam" autoplay muted playsinline></video></div>
       <canvas id="wave" class="wave" width="900" height="90"></canvas>
@@ -177,7 +177,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script>
-    const TOTAL_QUESTIONS = 10;
+    const TOTAL_QUESTIONS = 3;
+    const MIN_RECORDING_MS = 7000;
     const MAX_DURATION_MS = 15000;
     const SILENCE_TIMEOUT_MS = 1800;
     const VAD_THRESHOLD = 0.02;
@@ -220,6 +221,8 @@
     let sampleRate = 16000;
     let maxTimer;
     let silenceSince = null;
+    let recordingStartedAt = 0;
+    let minDurationTimer;
 
     let speakingDetected = false;
     let audioDetected = false;
@@ -280,7 +283,7 @@
 
       questions = qData.questions || [];
       if (questions.length !== TOTAL_QUESTIONS) {
-        showError("Server must return exactly 10 enrollment questions.");
+        showError(`Server must return exactly ${TOTAL_QUESTIONS} enrollment questions.`);
         startBtn.disabled = true;
         return;
       }
@@ -394,7 +397,7 @@
       } else {
         setPill(vadStatus, "Silent", "warn");
         if (silenceSince === null) silenceSince = Date.now();
-        if (Date.now() - silenceSince > SILENCE_TIMEOUT_MS) {
+        if ((Date.now() - silenceSince > SILENCE_TIMEOUT_MS) && (Date.now() - recordingStartedAt >= MIN_RECORDING_MS)) {
           stopRecording(true);
         }
       }
@@ -435,14 +438,19 @@
       showError("");
       resetValidationFlags();
       recording = true;
+      recordingStartedAt = Date.now();
       pcmChunks = [];
       silenceSince = null;
 
       startBtn.disabled = true;
-      stopBtn.disabled = false;
+      stopBtn.disabled = true;
       nextBtn.disabled = true;
       rerecordBtn.disabled = true;
 
+      clearTimeout(minDurationTimer);
+      minDurationTimer = setTimeout(() => {
+        if (recording) stopBtn.disabled = false;
+      }, MIN_RECORDING_MS);
       maxTimer = setTimeout(() => stopRecording(true), MAX_DURATION_MS);
     }
 
@@ -450,9 +458,11 @@
       if (!recording) return;
       recording = false;
       clearTimeout(maxTimer);
+      clearTimeout(minDurationTimer);
       stopBtn.disabled = true;
+      const recordedMs = Date.now() - recordingStartedAt;
 
-      const validationError = getValidationError();
+      const validationError = getValidationError(recordedMs);
       if (validationError) {
         showError(validationError);
         if (!rerecordUsed) {
@@ -497,7 +507,10 @@
       if (!rerecordUsed) rerecordBtn.disabled = false;
     }
 
-    function getValidationError() {
+    function getValidationError(recordedMs) {
+      if (recordedMs < MIN_RECORDING_MS) {
+        return `Each recording must be at least ${Math.round(MIN_RECORDING_MS / 1000)} seconds.`;
+      }
       if (faceCount === 0) return "No face detected";
       if (faceCount > 1) return "Multiple faces detected";
       if (!audioDetected) return "No audio input detected";
