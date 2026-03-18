@@ -113,7 +113,6 @@ When anomalies are detected, it writes:
 - `voice_enrollment.py`: 10-question enrollment processing and profile building.
 - `voice_biometric_store.py`: SQLite persistence for users, samples, profiles, runtime matches, gaze calibration.
 - `risk_engine.py`: event weight model, risk accumulation, frame/audio evidence persistence.
-- `hand_occlusion.py`: hand-over-mouth overlap detection (IoU / coverage).
 - `enrollment_questions.py`: canonical enrollment question bank (Q01–Q10).
 - `web_enrollment_app.py`: minimal Flask launcher (`create_app()`).
 - `_migrate_gaze_table.py`: one-time helper to ensure `gaze_calibrations` table exists.

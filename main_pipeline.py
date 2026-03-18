@@ -12,7 +12,6 @@ import yaml
 
 from audio_sync_verification import AudioSyncVerifier
 from av_correlation import AVCorrelationEngine
-from hand_occlusion import HandMouthOcclusionDetector, mouth_bbox_from_facemesh
 from lip_sync_verification import LipSyncVerifier
 from risk_engine import RiskEngine
 from speaker_verification import SpeakerVerifier
@@ -133,9 +132,6 @@ class PipelineConfig:
     sample_rate: int
     block_size: int
     vad_threshold: float
-    hand_iou_threshold: float
-    hand_consecutive_frames: int
-    hand_pad_ratio: float
     speaker_threshold: float
     face_similarity_threshold: float
     lipsync_verify_threshold: float
@@ -156,9 +152,6 @@ def load_config(path: str = "config.yaml") -> PipelineConfig:
         sample_rate=int(cfg.get("mic_sample_rate", 16000)),
         block_size=int(cfg.get("mic_block_size", 1024)),
         vad_threshold=float(cfg.get("mic_threshold", 0.015)),
-        hand_iou_threshold=float(cfg.get("hand_mouth_iou_threshold", 0.03)),
-        hand_consecutive_frames=int(cfg.get("hand_occlusion_consecutive_frames", 3)),
-        hand_pad_ratio=float(cfg.get("hand_box_padding_ratio", 0.20)),
         speaker_threshold=float(cfg.get("speaker_similarity_threshold", 0.72)),
         face_similarity_threshold=float(cfg.get("face_similarity_threshold", 0.65)),
         lipsync_verify_threshold=float(cfg.get("lipsync_verify_threshold", 0.45)),
@@ -181,19 +174,7 @@ class ExamProctorPipeline:
             min_detection_confidence=0.7,
             min_tracking_confidence=0.7,
         )
-        self.hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            model_complexity=1,
-            min_detection_confidence=0.6,
-            min_tracking_confidence=0.6,
-        )
         self.audio = AudioMonitor(config.sample_rate, config.block_size, config.vad_threshold)
-        self.occlusion = HandMouthOcclusionDetector(
-            iou_threshold=config.hand_iou_threshold,
-            consecutive_frames=config.hand_consecutive_frames,
-            pad_ratio=config.hand_pad_ratio,
-        )
         self.av = AVCorrelationEngine()
         self.speaker = SpeakerVerifier(
             sample_rate=config.sample_rate,
@@ -245,17 +226,14 @@ class ExamProctorPipeline:
 
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 face_result = self.face_mesh.process(rgb)
-                hands_result = self.hands.process(rgb)
                 faces = face_result.multi_face_landmarks if face_result.multi_face_landmarks else []
                 num_faces = len(faces)
 
                 mar = 0.0
-                mouth_visible = False
                 lip_sync_status = "NO_FACE"
                 speaker_sim: Optional[float] = spk.similarity
                 speaker_drift: Optional[float] = spk.drift
                 face_consistent = True
-                occl_iou = 0.0
                 av_status = "IDLE"
                 corr_score = None
                 audio_sync_score = 1.0
@@ -268,15 +246,7 @@ class ExamProctorPipeline:
                 if num_faces >= 1:
                     primary = faces[0]
                     mar = compute_mar(primary)
-                    mouth_box = mouth_bbox_from_facemesh(primary, frame.shape)
-                    occ = self.occlusion.update(
-                        mouth_box=mouth_box,
-                        hand_landmarks=hands_result.multi_hand_landmarks if hands_result else None,
-                        frame_shape=frame.shape,
-                    )
-                    mouth_visible = occ.mouth_visible
-                    occl_iou = occ.overlap_iou
-                    speaking_face_visible = mouth_visible and mar >= 0.02
+                    speaking_face_visible = mar >= 0.02
 
                     av_res = self.av.update(audio_present, audio_energy, mar)
                     av_status = av_res.status
@@ -290,7 +260,7 @@ class ExamProctorPipeline:
                         audio_chunk=audio_chunk,
                         audio_present=audio_present,
                         mar_value=mar,
-                        mouth_occluded=not mouth_visible,
+                        mouth_occluded=False,
                     )
                     audio_sync_score = sync_res.score
                     audio_sync_flags = sync_res.flags
@@ -321,16 +291,7 @@ class ExamProctorPipeline:
                             },
                         )
 
-                    if not mouth_visible:
-                        lip_sync_status = "MOUTH_OCCLUDED"
-                        self._log_once(
-                            "HAND_OCCLUSION",
-                            t,
-                            frame,
-                            self.audio.latest_seconds(2.5),
-                            {"iou": round(occl_iou, 4), "streak": occ.consecutive_frames},
-                        )
-                    elif av_status in ("AUDIO_ONLY", "WEAK_SYNC"):
+                    if av_status in ("AUDIO_ONLY", "WEAK_SYNC"):
                         lip_sync_status = "SUSPICIOUS"
                         self._log_once(
                             "AUDIO_ONLY",
@@ -470,7 +431,7 @@ class ExamProctorPipeline:
                     self.consecutive_voice_violations = 0
 
                 # Trigger heavy verification layer only when suspicious persists.
-                suspicious = lip_sync_status in ("SUSPICIOUS", "MOUTH_OCCLUDED")
+                suspicious = lip_sync_status == "SUSPICIOUS"
                 suspicious = suspicious or (audio_sync_score < self.cfg.audio_sync_low_score_threshold) or (len(audio_sync_flags) >= 2)
                 self.suspicious_streak = self.suspicious_streak + 1 if suspicious else 0
                 verify_text = "SKIPPED"
@@ -497,7 +458,6 @@ class ExamProctorPipeline:
                     f"AV Status: {av_status}  Corr={corr_score if corr_score is not None else float('nan'):.3f}",
                     f"AudioSync Score: {audio_sync_score:.3f}  Offset(ms): {av_offset_ms if av_offset_ms is not None else float('nan'):.1f}",
                     f"AudioSync Flags: {', '.join(audio_sync_flags) if audio_sync_flags else 'NONE'}",
-                    f"Mouth IoU(Hand): {occl_iou:.3f}  Mouth Visible: {'YES' if mouth_visible else 'NO'}",
                     f"Speaker Similarity: {speaker_sim if speaker_sim is not None else float('nan'):.3f} (thr={spk.threshold if spk.threshold is not None else float('nan'):.3f})",
                     f"Voice Drift: {speaker_drift if speaker_drift is not None else float('nan'):.3f} (thr={spk.drift_threshold if spk.drift_threshold is not None else float('nan'):.3f})",
                     f"Voice Base Match: {spk.status_color.upper()} ({spk.reason})",
@@ -518,7 +478,6 @@ class ExamProctorPipeline:
             self.audio.stop()
             cap.release()
             self.face_mesh.close()
-            self.hands.close()
             cv2.destroyAllWindows()
             path = self.risk.export_json()
             print(f"Evidence log saved: {path}")

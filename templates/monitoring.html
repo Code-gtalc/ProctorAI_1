@@ -518,6 +518,7 @@
             <div class="stat"><div class="k">Lip Sync</div><div id="lipsync" class="v">IDLE</div></div>
             <div class="stat"><div class="k">Gaze Status</div><div id="gazeStatus" class="v">DISABLED</div></div>
             <div class="stat"><div class="k">Gaze Confidence</div><div id="gazeConf" class="v">0.000</div></div>
+            <div class="stat"><div class="k">Face Visibility</div><div id="faceVis" class="v">1.000</div><div class="meter"><div id="faceVisBar" class="fill"></div></div></div>
             <div class="stat"><div class="k">Gaze Calibration</div><div id="gazeCal" class="v">0%</div><div class="meter"><div id="gazeBar" class="fill"></div></div></div>
             <div class="stat"><div class="k">Speaker Decision</div><div id="spk" class="v">UNKNOWN</div></div>
             <div class="stat"><div class="k">Speaker Similarity</div><div id="sim" class="v">-</div><div class="meter"><div id="simBar" class="fill"></div></div></div>
@@ -564,6 +565,8 @@
     const lipEl = document.getElementById("lipsync");
     const gazeStatusEl = document.getElementById("gazeStatus");
     const gazeConfEl = document.getElementById("gazeConf");
+    const faceVisEl = document.getElementById("faceVis");
+    const faceVisBarEl = document.getElementById("faceVisBar");
     const gazeCalEl = document.getElementById("gazeCal");
     const gazeBarEl = document.getElementById("gazeBar");
     const spkEl = document.getElementById("spk");
@@ -683,6 +686,10 @@
       styleValue(gazeStatusEl, gazeMode);
       gazeConfEl.textContent = fmt(s.gaze_confidence);
       styleValue(gazeConfEl, (Number(s.gaze_confidence || 0) >= 0.5) ? "ok" : "warn");
+      const faceVisibility = Number(s.face_visibility_ratio ?? 1.0);
+      faceVisEl.textContent = fmt(faceVisibility);
+      styleValue(faceVisEl, faceVisibility >= 0.6 ? "ok" : "err");
+      faceVisBarEl.style.width = `${Math.max(0, Math.min(100, Math.round(100 * faceVisibility)))}%`;
       const gp = Math.round(100 * Number(s.gaze_progress || 0));
       gazeCalEl.textContent = s.gaze_calibrated ? "Calibrated" : `${gp}%`;
       styleValue(gazeCalEl, s.gaze_calibrated ? "ok" : "warn");

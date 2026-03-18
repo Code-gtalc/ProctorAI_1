@@ -16,6 +16,7 @@ from speaker_verification import SpeakerVerificationResult, SpeakerVerifier
 from voice_biometric_store import VoiceBiometricStore
 from voice_features import extract_voice_features
 from web_modules.audio import AudioMonitor
+from web_modules.face_occlusion_detector import FaceOcclusionDetector
 from web_modules.gaze_bridge import GazeEngine, GazeReading, _reading_kwargs
 from web_modules.phone_detection import PhoneDetector  # Import PhoneDetector
 from web_modules.verification_logic import (
@@ -39,6 +40,9 @@ def _human_flag_detail(reason: str, details: dict[str, object] | None = None) ->
     if reason == "GAZE_OUTSIDE":
         conf = info.get("gaze_confidence")
         return f"Gaze moved outside calibrated screen region (confidence={conf})."
+    if reason == "FACE_OCCLUDED":
+        ratio = info.get("face_visibility_ratio")
+        return f"Face occlusion detected (visibility_ratio={ratio})."
     if reason == "VOICE_POLICY_WARNING":
         why = str(info.get("reason", "voice anomaly"))
         streak = info.get("streak")
@@ -134,6 +138,11 @@ class MonitoringWorker:
             "gaze_countdown_active": False,
             "gaze_countdown_remaining": 0.0,
             "gaze_capturing": False,
+            "face_model_backend": "unknown",
+            "face_visibility_ratio": 1.0,
+            "face_occlusion_counter": 0,
+            "face_occlusion_cooldown_active": False,
+            "face_occlusion_cooldown_remaining": 0.0,
             "speaker_similarity_bar": 0.0,
             "voice_stability": "Stable",
             "active_speaker_status": "UNKNOWN",
@@ -224,6 +233,11 @@ class MonitoringWorker:
             "countdown_active": state.get("gaze_countdown_active", False),
             "countdown_remaining": state.get("gaze_countdown_remaining", 0.0),
             "capturing": state.get("gaze_capturing", False),
+            "face_model_backend": state.get("face_model_backend", "unknown"),
+            "face_visibility_ratio": state.get("face_visibility_ratio", 1.0),
+            "face_occlusion_counter": state.get("face_occlusion_counter", 0),
+            "face_occlusion_cooldown_active": state.get("face_occlusion_cooldown_active", False),
+            "face_occlusion_cooldown_remaining": state.get("face_occlusion_cooldown_remaining", 0.0),
             "error": state.get("error", ""),
         }
 
@@ -303,6 +317,10 @@ class MonitoringWorker:
             gaze_countdown_active=False,
             gaze_countdown_remaining=0.0,
             gaze_capturing=False,
+            face_visibility_ratio=1.0,
+            face_occlusion_counter=0,
+            face_occlusion_cooldown_active=False,
+            face_occlusion_cooldown_remaining=0.0,
         )
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -337,9 +355,17 @@ class MonitoringWorker:
             audio_sync = AudioSyncVerifier(sample_rate=self.sample_rate)
             lip_verifier = LipSyncVerifier()
             risk = RiskEngine(log_dir="proctor_logs")
-            face_mesh, _ = create_face_mesh_backend()
+            face_mesh, face_backend_name = create_face_mesh_backend()
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
             face_cascade_alt = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml")
+            active_face_model = face_backend_name if face_mesh is not None else "opencv_haar_cascade"
+            print(f"[FaceModel] Using face detection/landmark model: {active_face_model}")
+            occlusion_detector = FaceOcclusionDetector(
+                model_type="mediapipe_face_mesh" if face_mesh is not None else "opencv_haar_cascade",
+                visibility_threshold=0.6,
+                consecutive_frames=3,
+                cooldown_s=6.0,
+            )
 
             # Initialize phone detector
             phone_detector = PhoneDetector(model_dir="web_modules")
@@ -359,7 +385,7 @@ class MonitoringWorker:
                 **_reading_kwargs(gaze_engine.calibration_state()),
             )
             self._apply_gaze_reading(gaze_cache)
-            self._update_state(error="" if gaze_ok else gaze_message)
+            self._update_state(error="" if gaze_ok else gaze_message, face_model_backend=active_face_model)
             outside_gaze_streak = 0
             frame_index = 0
             motion_series: deque[float] = deque(maxlen=120)
@@ -370,6 +396,7 @@ class MonitoringWorker:
             last_face_count = -1
             last_faces: list[object] = []
             last_num_faces = 0
+            last_face_boxes: list[tuple[int, int, int, int]] = []
             last_verify_t = 0.0
             verify_interval_s = 1.0
             min_voice_policy_rms = 0.012
@@ -420,6 +447,7 @@ class MonitoringWorker:
                     audio_present = mic.vad()
                     audio_rms = mic.rms()
                     faces = []
+                    face_boxes: list[tuple[int, int, int, int]] = []
                     num_faces = 0
                     if face_mesh is not None:
                         unstable_face_window = stable_faces != 1 or stable_face_streak < 6
@@ -446,7 +474,32 @@ class MonitoringWorker:
                         det = face_cascade.detectMultiScale(small, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
                         if len(det) == 0:
                             det = face_cascade_alt.detectMultiScale(small, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                        last_face_boxes = [(int(x * 2), int(y * 2), int((x + w) * 2), int((y + h) * 2)) for (x, y, w, h) in det]
+                        face_boxes = last_face_boxes
                         num_faces = int(len(det))
+
+                    now_t = time.time()
+                    primary_landmarks = faces[0] if faces else None
+                    primary_bbox = face_boxes[0] if face_boxes else None
+                    occ_flag = occlusion_detector.update(
+                        frame=frame,
+                        landmarks=primary_landmarks,
+                        face_bbox=primary_bbox,
+                        now=now_t,
+                    )
+                    occ_state = occlusion_detector.state()
+                    if occ_flag == "FACE_OCCLUDED":
+                        self._flag_event(
+                            "FACE_OCCLUDED",
+                            risk,
+                            frame,
+                            mic.latest_seconds(1.0),
+                            {
+                                "face_visibility_ratio": float(occ_state.face_visibility_ratio),
+                                "occlusion_counter": int(occ_state.occlusion_counter),
+                            },
+                            cooldown_s=6.0,
+                        )
 
                     if num_faces == last_face_count:
                         stable_face_streak += 1
@@ -457,7 +510,6 @@ class MonitoringWorker:
                     if stable_face_streak >= 3:
                         stable_faces = num_faces
 
-                    now_t = time.time()
                     lip_sync_status = "NO_FACE"
                     mar = 0.0
                     mar_delta = 0.0
@@ -728,6 +780,11 @@ class MonitoringWorker:
                         gaze_confidence=float(gaze_cache.confidence),
                         gaze_calibrated=bool(gaze_cache.calibrated),
                         gaze_progress=float(gaze_cache.progress),
+                        face_model_backend=active_face_model,
+                        face_visibility_ratio=float(occ_state.face_visibility_ratio),
+                        face_occlusion_counter=int(occ_state.occlusion_counter),
+                        face_occlusion_cooldown_active=bool(occ_state.cooldown_active),
+                        face_occlusion_cooldown_remaining=float(occ_state.cooldown_remaining),
                         speaker_similarity_bar=float(decision_cache.similarity_score),
                         voice_stability=str(stability_label),
                         active_speaker_status=active_speaker_status,
