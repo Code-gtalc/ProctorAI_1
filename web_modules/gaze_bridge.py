@@ -170,32 +170,31 @@ class GazeEngine:
         self.down_relax_factor = float(getattr(self._module, "DOWN_RELAX_FACTOR", self.down_relax_factor))
 
     def _load_saved_calibration(self) -> None:
-        # ── Per-user calibration from DB (preferred) ──
+        # ── Per-user calibration from DB ──
         if self._store is not None and self._user_id:
             saved = self._store.load_gaze_calibration(self._user_id)
             if saved:
-                self._mean_gaze = np.array(saved["mean_gaze"], dtype=np.float32)
-                self._inv_cov = np.array(saved["inv_cov"], dtype=np.float32)
-                self._h_threshold = float(saved["H_THRESHOLD"])
-                self._v_threshold = float(saved["V_THRESHOLD"])
-                self._calib_index = len(self._calibration_steps)
-                return  # loaded successfully — skip legacy file
-
-        # ── Legacy global file fallback ──
-        if self._module is None:
-            return
-        loader = getattr(self._module, "load_calibration", None)
-        if not callable(loader):
-            return
-        saved = loader()
-        if not saved:
-            return
-        data = dict(saved)
-        self._mean_gaze = np.array(data["mean_gaze"], dtype=np.float32)
-        self._inv_cov = np.array(data["inv_cov"], dtype=np.float32)
-        self._h_threshold = float(data["H_THRESHOLD"])
-        self._v_threshold = float(data["V_THRESHOLD"])
-        self._calib_index = len(self._calibration_steps)
+                try:
+                    self._mean_gaze = np.array(saved["mean_gaze"], dtype=np.float32)
+                    self._inv_cov = np.array(saved["inv_cov"], dtype=np.float32)
+                    self._h_threshold = float(saved["H_THRESHOLD"])
+                    self._v_threshold = float(saved["V_THRESHOLD"])
+                    self._calib_index = len(self._calibration_steps)
+                except (KeyError, ValueError, TypeError):
+                    # Data corrupted or incompatible
+                    self._mean_gaze = None
+                    self._inv_cov = None
+                    self._calib_index = 0
+            else:
+                # No calibration found for this user
+                self._mean_gaze = None
+                self._inv_cov = None
+                self._calib_index = 0
+        else:
+            # Without store/user_id, cannot load personal calibration
+            self._mean_gaze = None
+            self._inv_cov = None
+            self._calib_index = 0
 
     def start(self) -> tuple[bool, str]:
         ok, msg = self._import_external_module()

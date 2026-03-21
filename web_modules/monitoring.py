@@ -290,8 +290,13 @@ class MonitoringWorker:
         return ok, message, self.get_gaze_state()
 
     def start(self, user_id: str) -> tuple[bool, str]:
+        # If monitoring is already active...
         if self._thread and self._thread.is_alive():
-            return False, "Monitoring already running."
+            # If it's for the same user, just say OK.
+            if self._user_id == user_id:
+                return True, "Monitoring already running for this user."
+            # If it's a different user, STOP the old session first.
+            self.stop()
 
         profile = self.store.load_profile(user_id)
         if profile is None or not profile.enrollment_complete:
