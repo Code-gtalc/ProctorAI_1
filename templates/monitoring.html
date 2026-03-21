@@ -621,6 +621,9 @@
     let latestState = {};
     let pollTimer = null;
     let prevState = null;
+    let flowMode = "exam";
+    let returnToUrl = "";
+    let redirectedAfterCalibration = false;
     let faceVisFlashTimer = null;
     let lastFaceVisFlashAt = 0;
     const FACE_VISIBILITY_WARN_THRESHOLD = 0.6;
@@ -695,6 +698,18 @@
       }
 
       prevState = { ...s };
+    }
+
+    async function stopMonitoringQuietly() {
+      try {
+        await fetch("/api/monitor/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+      } catch (_) {
+        // Intentionally ignored; this is a best-effort cleanup before redirect.
+      }
     }
 
     async function startMonitoring(userId) {
@@ -891,13 +906,24 @@
       if (calibrated) {
         calibStatus.textContent = "Calibration complete";
         styleBadge(calibStatus, "ok");
-        calibHint.textContent = "Gaze baseline loaded. Switching to dashboard...";
+        if (flowMode === "calibration_only" && returnToUrl) {
+          calibHint.textContent = "Gaze baseline loaded. Returning to home...";
+        } else {
+          calibHint.textContent = "Gaze baseline loaded. Switching to dashboard...";
+        }
         startCalibBtn.disabled = true;
-        // Transition to the monitoring dashboard after a brief delay
-        setTimeout(() => {
-          calibScreen.classList.add("hidden");
-          dashboard.classList.remove("hidden");
-        }, 750);
+        if (flowMode === "calibration_only" && returnToUrl && !redirectedAfterCalibration) {
+          redirectedAfterCalibration = true;
+          setTimeout(async () => {
+            await stopMonitoringQuietly();
+            window.location.href = returnToUrl;
+          }, 800);
+        } else if (flowMode !== "calibration_only") {
+          setTimeout(() => {
+            calibScreen.classList.add("hidden");
+            dashboard.classList.remove("hidden");
+          }, 750);
+        }
       } else if (capturing) {
         calibStatus.textContent = `Capturing ${stepName}`;
         styleBadge(calibStatus, "warn");
@@ -959,6 +985,8 @@
     async function boot() {
       const params = new URLSearchParams(window.location.search);
       const userId = (params.get("user_id") || "").trim();
+      flowMode = (params.get("mode") || "exam").trim().toLowerCase();
+      returnToUrl = (params.get("return_to") || "").trim();
       if (!userId) {
         throw new Error("Missing user_id in URL");
       }
@@ -966,6 +994,10 @@
       await startMonitoring(userId);
       frameEl.src = "/api/monitor/stream";
       await pollState();
+      if (flowMode === "exam" && latestState.gaze_calibrated) {
+        calibScreen.classList.add("hidden");
+        dashboard.classList.remove("hidden");
+      }
       pollTimer = setInterval(pollState, 650);
 
       startCalibBtn.addEventListener("click", runCalibrationGuide);

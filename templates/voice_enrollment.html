@@ -286,7 +286,8 @@
     }
 
     async function init() {
-      userId = prompt("Enter User ID") || "";
+      const params = new URLSearchParams(window.location.search);
+      userId = params.get("user_id") || prompt("Enter User ID") || "";
       userId = userId.trim();
       if (!userId) {
         showError("User ID is required.");
@@ -649,22 +650,32 @@
     }
 
     function showDone(data, alreadyComplete) {
+      const params = new URLSearchParams(window.location.search);
+      const returnTo = params.get("return_to") || "";
       enrollmentScreen.style.display = "none";
       doneScreen.style.display = "block";
       if (alreadyComplete) {
         qualityScoreEl.textContent = "Voice quality score: Already enrolled";
         confidenceEl.textContent = "Enrollment confidence: Locked";
         setTimeout(() => {
-          window.location.href = `/monitor?user_id=${encodeURIComponent(userId)}`;
+          if (returnTo) {
+            window.location.href = returnTo;
+          } else {
+            window.location.href = `/monitor?user_id=${encodeURIComponent(userId)}`;
+          }
         }, 1200);
       } else {
         qualityScoreEl.textContent = `Voice quality score: ${data.voice_quality_score}`;
         confidenceEl.textContent = `Enrollment confidence: ${data.enrollment_confidence}%`;
-        if (data.monitor_url) {
-          setTimeout(() => {
+        setTimeout(() => {
+          if (returnTo) {
+            window.location.href = returnTo;
+            return;
+          }
+          if (data.monitor_url) {
             window.location.href = data.monitor_url;
-          }, 1200);
-        }
+          }
+        }, 1200);
       }
     }
 

@@ -18,8 +18,26 @@ def create_app() -> Flask:
     enrollment_api = EnrollmentApi()
     monitor = MonitoringWorker(store=enrollment_api.store)
 
+    @app.after_request
+    def add_cors_headers(response: Response) -> Response:
+        # Allow React dev server and local integrations to call API endpoints.
+        response.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+        return response
+
+    @app.route("/api/<path:rest>", methods=["OPTIONS"])
+    def api_options(rest: str) -> object:
+        del rest
+        return ("", 204)
+
     @app.get("/")
     def home() -> str:
+        return render_template("voice_enrollment.html")
+
+    @app.get("/voice-enrollment")
+    def voice_enrollment_page() -> str:
         return render_template("voice_enrollment.html")
 
     @app.get("/monitor")
