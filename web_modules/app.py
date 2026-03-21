@@ -178,8 +178,11 @@ def create_app() -> Flask:
             return jsonify({"error": "user_id is required"}), 400
 
         ok, message = monitor.start(user_id)
+        state = monitor.get_state()
+        if not ok and "already running" in message.lower() and str(state.get("user_id", "")) == user_id:
+            return jsonify({"ok": True, "message": "Monitoring already running.", "state": state}), 200
         code = 200 if ok else 400
-        return jsonify({"ok": ok, "message": message, "state": monitor.get_state()}), code
+        return jsonify({"ok": ok, "message": message, "state": state}), code
 
     @app.post("/api/monitor/stop")
     def monitor_stop() -> object:

@@ -203,16 +203,26 @@ export default function ProctorGuardDashboard() {
   }
 
   async function ensureMonitorStarted() {
-    const response = await fetch(apiUrl("/api/monitor/start"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: registerNo.trim() }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.ok) {
-      const message = payload.error || payload.message || "Unable to start monitor.";
-      throw new Error(message);
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(apiUrl("/api/monitor/start"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: registerNo.trim() }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        const message = String(payload.error || payload.message || "");
+        if ((!response.ok || !payload.ok) && !message.toLowerCase().includes("already running")) {
+          throw new Error(message || "Unable to start monitor.");
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+      }
     }
+    throw lastError instanceof Error ? lastError : new Error("Unable to start monitor.");
   }
 
   function handleVoiceEnrollmentStart() {

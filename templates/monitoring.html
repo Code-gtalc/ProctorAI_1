@@ -719,9 +719,50 @@
         body: JSON.stringify({ user_id: userId }),
       });
       const data = await resp.json();
-      if (!resp.ok || !data.ok) {
+      const message = String(data.message || data.error || "");
+      // Idempotent behavior: if already running, keep going.
+      if ((!resp.ok || !data.ok) && !message.toLowerCase().includes("already running")) {
         throw new Error(data.message || data.error || "Unable to start monitoring");
       }
+    }
+
+    async function stopMonitoring() {
+      await fetch("/api/monitor/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    }
+
+    async function fetchMonitorState() {
+      const resp = await fetch("/api/monitor/state");
+      return resp.json();
+    }
+
+    async function ensureMonitoringSession(userId) {
+      const state = await fetchMonitorState();
+      const running = !!state.running;
+      const activeUser = String(state.user_id || "");
+
+      if (running && activeUser === userId) {
+        return;
+      }
+      if (running && activeUser && activeUser !== userId) {
+        await stopMonitoring();
+      }
+
+      // Short retry loop to smooth startup races.
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await startMonitoring(userId);
+          return;
+        } catch (e) {
+          lastErr = e;
+          await sleep(220 * (attempt + 1));
+        }
+      }
+      throw lastErr || new Error("Unable to initialize monitoring session");
     }
 
     async function pollState() {
@@ -991,7 +1032,7 @@
         throw new Error("Missing user_id in URL");
       }
 
-      await startMonitoring(userId);
+      await ensureMonitoringSession(userId);
       frameEl.src = "/api/monitor/stream";
       await pollState();
       if (flowMode === "exam" && latestState.gaze_calibrated) {
