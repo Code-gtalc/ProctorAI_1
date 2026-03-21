@@ -191,6 +191,20 @@ def create_app() -> Flask:
 
     @app.get("/api/monitor/gaze")
     def monitor_gaze_state() -> object:
+        expected_user = request.args.get("user_id")
+        current_state = monitor.get_state()
+
+        # If user_id requested but doesn't match active monitor user, return empty/false state
+        if expected_user and str(current_state.get("user_id", "")) != expected_user:
+            return jsonify({
+                "status": "DISABLED",
+                "calibrated": False,
+                "confidence": 0.0,
+                "progress": 0.0,
+                "enabled": False,
+                "error": "Monitor not active for this user"
+            })
+
         return jsonify(monitor.get_gaze_state())
 
     @app.post("/api/monitor/gaze/start-step")

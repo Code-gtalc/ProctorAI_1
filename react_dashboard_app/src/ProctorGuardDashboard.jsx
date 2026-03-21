@@ -129,7 +129,7 @@ export default function ProctorGuardDashboard() {
     try {
       const [enrollmentResp, gazeResp] = await Promise.all([
         fetch(apiUrl(`/api/enrollment/status/${encodeURIComponent(registerNo.trim())}`)),
-        fetch(apiUrl("/api/monitor/gaze")),
+        fetch(apiUrl(`/api/monitor/gaze?user_id=${encodeURIComponent(registerNo.trim())}`)),
       ]);
 
       const enrollment = await enrollmentResp.json().catch(() => ({}));
