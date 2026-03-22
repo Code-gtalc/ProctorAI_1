@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
 
 from flask import Flask, Response, jsonify, render_template, request
+import numpy as np
 
 from voice_features import extract_voice_features
 from web_modules.enrollment import EnrollmentApi, read_wav_bytes, save_wav, utc_now_iso
@@ -17,6 +19,17 @@ def create_app() -> Flask:
     app = Flask(__name__, template_folder=str(project_root / "templates"))
     enrollment_api = EnrollmentApi()
     monitor = MonitoringWorker(store=enrollment_api.store)
+
+    def _warmup_voice_features() -> None:
+        # Warm up heavy librosa/lazy-loader paths so first enrollment upload responds faster.
+        try:
+            dummy_audio = np.zeros((16000,), dtype=np.float32)  # 1s silence at 16 kHz
+            extract_voice_features(dummy_audio, 16000)
+        except Exception:
+            # Best-effort warmup only; enrollment endpoint still handles real errors.
+            pass
+
+    threading.Thread(target=_warmup_voice_features, daemon=True).start()
 
     @app.after_request
     def add_cors_headers(response: Response) -> Response:

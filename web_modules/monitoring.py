@@ -444,6 +444,10 @@ class MonitoringWorker:
             frequency_match = None
             pitch_min_hz = None
             pitch_max_hz = None
+            last_jpeg_emit_t = 0.0
+            jpeg_emit_interval_s = 1.0 / 12.0  # Keep stream smooth while reducing JPEG encode overhead.
+            last_state_emit_t = 0.0
+            state_emit_interval_s = 0.20  # Emit worker state at ~5 Hz.
 
             try:
                 while not self._stop.is_set():
@@ -751,62 +755,66 @@ class MonitoringWorker:
                     face_count_status = "SINGLE_FACE" if stable_faces == 1 else ("MULTIPLE_FACES" if stable_faces > 1 else "NO_FACE")
                     active_speaker_status = "BOUND" if (audio_present and stable_faces == 1 and lip_sync_status in ("SYNC_OK", "UNCERTAIN_NO_LANDMARKS")) else "UNBOUND"
 
-                    ok_jpg, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
-                    if ok_jpg:
-                        with self._lock:
-                            self._latest_jpeg = encoded.tobytes()
+                    if (now_t - last_jpeg_emit_t) >= jpeg_emit_interval_s:
+                        ok_jpg, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+                        if ok_jpg:
+                            with self._lock:
+                                self._latest_jpeg = encoded.tobytes()
+                            last_jpeg_emit_t = now_t
 
-                    self._update_state(
-                        running=True,
-                        user_id=self._user_id,
-                        faces=stable_faces,
-                        audio_present=audio_present,
-                        lip_sync_status=lip_sync_status,
-                        speaker_decision=spk.decision,
-                        speaker_reason=spk.reason,
-                        speaker_similarity=None if spk.similarity is None else float(spk.similarity),
-                        speaker_similarity_avg=None if spk.similarity_avg is None else float(spk.similarity_avg),
-                        speaker_match_ratio=None if spk.match_ratio is None else float(spk.match_ratio),
-                        speaker_energy_ratio=None if spk.energy_ratio is None else float(spk.energy_ratio),
-                        speaker_energy_score=None if spk.energy_score is None else float(spk.energy_score),
-                        speaker_spoof_score=None if spk.spoof_score is None else float(spk.spoof_score),
-                        speaker_threshold=None if spk.threshold is None else float(spk.threshold),
-                        voice_drift=None if spk.drift is None else float(spk.drift),
-                        drift_threshold=None if spk.drift_threshold is None else float(spk.drift_threshold),
-                        pitch_hz=pitch_hz,
-                        pitch_min_hz=pitch_min_hz,
-                        pitch_max_hz=pitch_max_hz,
-                        pitch_match=pitch_match,
-                        frequency_match=frequency_match,
-                        audio_sync_score=float(sync_res.score),
-                        audio_sync_flags=list(sync_res.flags),
-                        av_offset_ms=None if sync_res.offset_ms is None else float(sync_res.offset_ms),
-                        verify_score=verify_score,
-                        risk_score=int(risk.risk_score),
-                        risk_level=risk.level(),
-                        multiple_voice_suspected=multiple_voice_suspected,
-                        multiple_voice_reason=multiple_voice_reason,
-                        speaker_count=int(multi_cache.speaker_count),
-                        speaker_count_confidence=float(multi_cache.confidence),
-                        gaze_enabled=bool(gaze_ok),
-                        gaze_status=str(gaze_cache.status),
-                        gaze_confidence=float(gaze_cache.confidence),
-                        gaze_calibrated=bool(gaze_cache.calibrated),
-                        gaze_progress=float(gaze_cache.progress),
-                        face_model_backend=active_face_model,
-                        face_visibility_ratio=(0.0 if stable_faces == 0 else float(occ_state.face_visibility_ratio)),
-                        face_occlusion_counter=int(occ_state.occlusion_counter),
-                        face_occlusion_cooldown_active=bool(occ_state.cooldown_active),
-                        face_occlusion_cooldown_remaining=float(occ_state.cooldown_remaining),
-                        speaker_similarity_bar=float(decision_cache.similarity_score),
-                        voice_stability=str(stability_label),
-                        active_speaker_status=active_speaker_status,
-                        face_count_status=face_count_status,
-                        verification_state=str(decision_cache.state),
-                        escalation_level=escalation_level,
-                        anomaly_streak=int(anomaly_streak),
-                        error=gaze_cache.error if gaze_cache.error else "",
-                    )
+                    if (now_t - last_state_emit_t) >= state_emit_interval_s:
+                        self._update_state(
+                            running=True,
+                            user_id=self._user_id,
+                            faces=stable_faces,
+                            audio_present=audio_present,
+                            lip_sync_status=lip_sync_status,
+                            speaker_decision=spk.decision,
+                            speaker_reason=spk.reason,
+                            speaker_similarity=None if spk.similarity is None else float(spk.similarity),
+                            speaker_similarity_avg=None if spk.similarity_avg is None else float(spk.similarity_avg),
+                            speaker_match_ratio=None if spk.match_ratio is None else float(spk.match_ratio),
+                            speaker_energy_ratio=None if spk.energy_ratio is None else float(spk.energy_ratio),
+                            speaker_energy_score=None if spk.energy_score is None else float(spk.energy_score),
+                            speaker_spoof_score=None if spk.spoof_score is None else float(spk.spoof_score),
+                            speaker_threshold=None if spk.threshold is None else float(spk.threshold),
+                            voice_drift=None if spk.drift is None else float(spk.drift),
+                            drift_threshold=None if spk.drift_threshold is None else float(spk.drift_threshold),
+                            pitch_hz=pitch_hz,
+                            pitch_min_hz=pitch_min_hz,
+                            pitch_max_hz=pitch_max_hz,
+                            pitch_match=pitch_match,
+                            frequency_match=frequency_match,
+                            audio_sync_score=float(sync_res.score),
+                            audio_sync_flags=list(sync_res.flags),
+                            av_offset_ms=None if sync_res.offset_ms is None else float(sync_res.offset_ms),
+                            verify_score=verify_score,
+                            risk_score=int(risk.risk_score),
+                            risk_level=risk.level(),
+                            multiple_voice_suspected=multiple_voice_suspected,
+                            multiple_voice_reason=multiple_voice_reason,
+                            speaker_count=int(multi_cache.speaker_count),
+                            speaker_count_confidence=float(multi_cache.confidence),
+                            gaze_enabled=bool(gaze_ok),
+                            gaze_status=str(gaze_cache.status),
+                            gaze_confidence=float(gaze_cache.confidence),
+                            gaze_calibrated=bool(gaze_cache.calibrated),
+                            gaze_progress=float(gaze_cache.progress),
+                            face_model_backend=active_face_model,
+                            face_visibility_ratio=(0.0 if stable_faces == 0 else float(occ_state.face_visibility_ratio)),
+                            face_occlusion_counter=int(occ_state.occlusion_counter),
+                            face_occlusion_cooldown_active=bool(occ_state.cooldown_active),
+                            face_occlusion_cooldown_remaining=float(occ_state.cooldown_remaining),
+                            speaker_similarity_bar=float(decision_cache.similarity_score),
+                            voice_stability=str(stability_label),
+                            active_speaker_status=active_speaker_status,
+                            face_count_status=face_count_status,
+                            verification_state=str(decision_cache.state),
+                            escalation_level=escalation_level,
+                            anomaly_streak=int(anomaly_streak),
+                            error=gaze_cache.error if gaze_cache.error else "",
+                        )
+                        last_state_emit_t = now_t
 
                     time.sleep(0.01)
             finally:

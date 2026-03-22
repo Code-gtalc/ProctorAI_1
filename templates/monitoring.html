@@ -620,6 +620,7 @@
 
     let latestState = {};
     let pollTimer = null;
+    let pollInFlight = false;
     let prevState = null;
     let flowMode = "exam";
     let returnToUrl = "";
@@ -735,7 +736,7 @@
     }
 
     async function fetchMonitorState() {
-      const resp = await fetch("/api/monitor/state");
+      const resp = await fetch("/api/monitor/state", { cache: "no-store" });
       return resp.json();
     }
 
@@ -766,10 +767,13 @@
     }
 
     async function pollState() {
-      const resp = await fetch("/api/monitor/state");
-      const s = await resp.json();
-      latestState = s;
-      streamStateLogs(s);
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const resp = await fetch("/api/monitor/state", { cache: "no-store" });
+        const s = await resp.json();
+        latestState = s;
+        streamStateLogs(s);
 
       userIdEl.textContent = s.user_id || "-";
       facesEl.textContent = String(s.faces ?? 0);
@@ -875,17 +879,37 @@
       // If there's an active system error, show it as an error.
       // If no system error, but flags are raised, show the last flag reason as a warning.
       // Otherwise, show placeholder.
-      if (s.error) {
-        warningEl.textContent = s.error;
-        styleValue(warningEl, "err");
-        appendLog("ERROR", s.error); // Log error to console too
-      } else if (Number(s.flags || 0) > 0) {
-        warningEl.textContent = s.last_flag_reason || "Check Logs";
-        styleValue(warningEl, "warn");
-      } else {
-        warningEl.textContent = "-";
-        styleValue(warningEl, "ok");
+        if (s.error) {
+          warningEl.textContent = s.error;
+          styleValue(warningEl, "err");
+          appendLog("ERROR", s.error); // Log error to console too
+        } else if (Number(s.flags || 0) > 0) {
+          warningEl.textContent = s.last_flag_reason || "Check Logs";
+          styleValue(warningEl, "warn");
+        } else {
+          warningEl.textContent = "-";
+          styleValue(warningEl, "ok");
+        }
+      } finally {
+        pollInFlight = false;
       }
+    }
+
+    function nextPollDelayMs() {
+      return document.visibilityState === "visible" ? 900 : 2500;
+    }
+
+    function scheduleNextPoll() {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(async () => {
+        try {
+          await pollState();
+        } catch (_) {
+          // Ignore transient polling errors, the next cycle will retry.
+        } finally {
+          scheduleNextPoll();
+        }
+      }, nextPollDelayMs());
     }
 
     async function startGazeStep() {
@@ -1039,7 +1063,7 @@
         calibScreen.classList.add("hidden");
         dashboard.classList.remove("hidden");
       }
-      pollTimer = setInterval(pollState, 650);
+      scheduleNextPoll();
 
       startCalibBtn.addEventListener("click", runCalibrationGuide);
       resetCalibBtn.addEventListener("click", handleCalibrationReset);
@@ -1053,7 +1077,7 @@
     });
 
     window.addEventListener("beforeunload", () => {
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) clearTimeout(pollTimer);
       navigator.sendBeacon("/api/monitor/stop", new Blob(["{}"], { type: "application/json" }));
     });
   </script>

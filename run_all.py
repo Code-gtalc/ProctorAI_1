@@ -22,10 +22,17 @@ def _stream_output(prefix: str, pipe) -> None:
 def main() -> int:
     backend_cmd = [sys.executable, "web_enrollment_app.py"]
     frontend_cmd = ["npm.cmd", "run", "dev"]
+    backend_env = os.environ.copy()
+    backend_env.setdefault("PG_DEBUG", "0")
+    backend_env.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    backend_env.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    backend_env.setdefault("ABSL_MIN_LOG_LEVEL", "2")
+    backend_env.setdefault("GLOG_minloglevel", "2")
 
     backend = subprocess.Popen(
         backend_cmd,
         cwd=str(ROOT),
+        env=backend_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

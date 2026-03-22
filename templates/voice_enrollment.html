@@ -231,6 +231,7 @@
     let silenceSince = null;
     let recordingStartedAt = 0;
     let minDurationTimer;
+    let uploadInProgress = false;
 
     let speakingDetected = false;
     let audioDetected = false;
@@ -271,6 +272,7 @@
       stopBtn.disabled = true;
       rerecordBtn.disabled = true;
       nextBtn.disabled = true;
+      uploadInProgress = false;
       resetValidationFlags();
     }
 
@@ -522,6 +524,7 @@
 
     async function stopRecording(auto = false) {
       if (!recording) return;
+      if (uploadInProgress) return;
       recording = false;
       clearTimeout(maxTimer);
       clearTimeout(minDurationTimer);
@@ -558,19 +561,56 @@
         auto_stop: auto,
       }));
       form.append("audio", wavBlob, `${q.question_id}.wav`);
-
-      const resp = await fetch("/api/enrollment/recording", { method: "POST", body: form });
-      const result = await resp.json();
+      uploadInProgress = true;
+      showFlash("Uploading and processing your answer...", 12000);
+      nextBtn.disabled = true;
+      startBtn.disabled = true;
+      rerecordBtn.disabled = true;
+      const originalStopLabel = stopBtn.textContent;
+      stopBtn.textContent = "Processing...";
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let resp;
+      let result = {};
+      try {
+        resp = await fetch("/api/enrollment/recording", {
+          method: "POST",
+          body: form,
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        result = await resp.json().catch(() => ({}));
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          showError("Upload is taking too long. Please try re-recording this answer.");
+        } else {
+          showError("Network error while uploading audio. Please try again.");
+        }
+        if (!rerecordUsed) {
+          rerecordBtn.disabled = false;
+        }
+        startBtn.disabled = true;
+        uploadInProgress = false;
+        clearTimeout(timeoutId);
+        stopBtn.textContent = originalStopLabel;
+        return;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!resp.ok) {
         showError(result.error || "Failed to upload recording.");
         if (!rerecordUsed) rerecordBtn.disabled = false;
+        uploadInProgress = false;
+        stopBtn.textContent = originalStopLabel;
         return;
       }
 
       showError("");
       nextBtn.disabled = false;
       if (!rerecordUsed) rerecordBtn.disabled = false;
+      stopBtn.textContent = originalStopLabel;
+      uploadInProgress = false;
       if (currentIndex === 0 && !firstQuestionFlashShown) {
         firstQuestionFlashShown = true;
         showFlash("Response submitted. Processing for the first question may take a little time. Please do not panic.");

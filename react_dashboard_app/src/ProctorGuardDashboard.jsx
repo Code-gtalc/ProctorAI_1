@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Camera,
@@ -92,6 +92,9 @@ export default function ProctorGuardDashboard() {
   const [startingExam, setStartingExam] = useState(false);
   const [uiMessage, setUiMessage] = useState("");
   const [uiError, setUiError] = useState("");
+  const activeStatusRequestRef = useRef(null);
+  const statusFetchInFlightRef = useRef(false);
+  const registerNoTrim = useMemo(() => registerNo.trim(), [registerNo]);
 
   useEffect(() => {
     try {
@@ -110,26 +113,42 @@ export default function ProctorGuardDashboard() {
   }, []);
 
   useEffect(() => {
-    const t1 = setTimeout(() => setCameraReady(true), 500);
-    const t2 = setTimeout(() => setMicReady(true), 900);
-    const t3 = setTimeout(() => setInternetReady(true), 1200);
+    setCameraReady(true);
+    setMicReady(true);
+    const updateNetworkState = () => setInternetReady(navigator.onLine);
+    updateNetworkState();
+    window.addEventListener("online", updateNetworkState);
+    window.addEventListener("offline", updateNetworkState);
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
+      window.removeEventListener("online", updateNetworkState);
+      window.removeEventListener("offline", updateNetworkState);
     };
   }, []);
 
-  async function refreshBackendStatus() {
-    if (!isLoggedIn || !registerNo.trim()) {
+  const refreshBackendStatus = useCallback(async ({ silent = false } = {}) => {
+    if (!isLoggedIn || !registerNoTrim || statusFetchInFlightRef.current) {
       return;
     }
-    setLoadingStatus(true);
-    setUiError("");
+    statusFetchInFlightRef.current = true;
+    if (!silent) {
+      setLoadingStatus(true);
+      setUiError("");
+    }
+    const controller = new AbortController();
+    if (activeStatusRequestRef.current) {
+      activeStatusRequestRef.current.abort();
+    }
+    activeStatusRequestRef.current = controller;
     try {
       const [enrollmentResp, gazeResp] = await Promise.all([
-        fetch(apiUrl(`/api/enrollment/status/${encodeURIComponent(registerNo.trim())}`)),
-        fetch(apiUrl(`/api/monitor/gaze?user_id=${encodeURIComponent(registerNo.trim())}`)),
+        fetch(apiUrl(`/api/enrollment/status/${encodeURIComponent(registerNoTrim)}`), {
+          signal: controller.signal,
+          cache: "no-store",
+        }),
+        fetch(apiUrl(`/api/monitor/gaze?user_id=${encodeURIComponent(registerNoTrim)}`), {
+          signal: controller.signal,
+          cache: "no-store",
+        }),
       ]);
 
       const enrollment = await enrollmentResp.json().catch(() => ({}));
@@ -138,26 +157,50 @@ export default function ProctorGuardDashboard() {
       setVoiceCompleted(Boolean(enrollment.enrollment_complete));
       setCalibrationDone(Boolean(gaze.calibrated));
       setCalibrationStatus(String(gaze.status || "Not Started"));
-    } catch (_) {
-      setUiError("Unable to fetch backend status. Ensure Flask app is running on port 5000.");
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      if (!silent) {
+        setUiError("Unable to fetch backend status. Ensure Flask app is running on port 5000.");
+      }
     } finally {
-      setLoadingStatus(false);
+      if (activeStatusRequestRef.current === controller) {
+        activeStatusRequestRef.current = null;
+      }
+      statusFetchInFlightRef.current = false;
+      if (!silent) {
+        setLoadingStatus(false);
+      }
     }
-  }
+  }, [isLoggedIn, registerNoTrim]);
 
   useEffect(() => {
     refreshBackendStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoggedIn, registerNo]);
+    return () => {
+      if (activeStatusRequestRef.current) {
+        activeStatusRequestRef.current.abort();
+      }
+      statusFetchInFlightRef.current = false;
+    };
+  }, [refreshBackendStatus]);
 
   useEffect(() => {
-    if (!isLoggedIn || !registerNo.trim()) return;
+    if (!isLoggedIn || !registerNoTrim) return;
     const intervalId = window.setInterval(() => {
-      refreshBackendStatus();
-    }, 8000);
-    return () => window.clearInterval(intervalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoggedIn, registerNo]);
+      if (document.visibilityState === "visible") {
+        refreshBackendStatus({ silent: true });
+      }
+    }, 9000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshBackendStatus({ silent: true });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isLoggedIn, registerNoTrim, refreshBackendStatus]);
 
   const allDone = voiceCompleted && faceVerified && calibrationDone;
 
@@ -200,6 +243,12 @@ export default function ProctorGuardDashboard() {
     setCalibrationDone(false);
     setUiMessage("");
     setUiError("");
+    setLoadingStatus(false);
+    if (activeStatusRequestRef.current) {
+      activeStatusRequestRef.current.abort();
+      activeStatusRequestRef.current = null;
+      statusFetchInFlightRef.current = false;
+    }
   }
 
   async function ensureMonitorStarted() {
@@ -209,7 +258,7 @@ export default function ProctorGuardDashboard() {
         const response = await fetch(apiUrl("/api/monitor/start"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: registerNo.trim() }),
+          body: JSON.stringify({ user_id: registerNoTrim }),
         });
         const payload = await response.json().catch(() => ({}));
         const message = String(payload.error || payload.message || "");
@@ -226,13 +275,13 @@ export default function ProctorGuardDashboard() {
   }
 
   function handleVoiceEnrollmentStart() {
-    if (!registerNo.trim()) {
+    if (!registerNoTrim) {
       setUiError("Please login with register number first.");
       return;
     }
     const returnTo = encodeURIComponent(buildReturnUrl());
     window.location.assign(
-      apiUrl(`/voice-enrollment?user_id=${encodeURIComponent(registerNo.trim())}&return_to=${returnTo}`),
+      apiUrl(`/voice-enrollment?user_id=${encodeURIComponent(registerNoTrim)}&return_to=${returnTo}`),
     );
   }
 
@@ -243,7 +292,7 @@ export default function ProctorGuardDashboard() {
   }
 
   async function handleCalibrationStart() {
-    if (!registerNo.trim()) {
+    if (!registerNoTrim) {
       setUiError("Please login with register number first.");
       return;
     }
@@ -254,7 +303,7 @@ export default function ProctorGuardDashboard() {
       const returnTo = encodeURIComponent(buildReturnUrl());
       window.location.assign(
         apiUrl(
-          `/monitor?user_id=${encodeURIComponent(registerNo.trim())}&mode=calibration_only&return_to=${returnTo}`,
+          `/monitor?user_id=${encodeURIComponent(registerNoTrim)}&mode=calibration_only&return_to=${returnTo}`,
         ),
       );
     } catch (error) {
@@ -269,7 +318,7 @@ export default function ProctorGuardDashboard() {
     setStartingExam(true);
     try {
       await ensureMonitorStarted();
-      window.location.assign(apiUrl(`/monitor?user_id=${encodeURIComponent(registerNo.trim())}&mode=exam`));
+      window.location.assign(apiUrl(`/monitor?user_id=${encodeURIComponent(registerNoTrim)}&mode=exam`));
     } catch (error) {
       setUiError(error instanceof Error ? error.message : "Unable to start exam monitor.");
       setStartingExam(false);
